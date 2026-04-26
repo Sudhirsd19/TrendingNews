@@ -1,7 +1,8 @@
 const fetch = require("node-fetch");
 const admin = require("firebase-admin");
+const xml2js = require("xml2js");
 
-// 🔐 Firebase init
+// Firebase init
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
@@ -10,28 +11,30 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// 📰 Fetch News
+// 📰 Fetch News from RSS (BBC)
 async function fetchNews() {
   try {
-    const res = await fetch(`https://newsapi.org/v2/top-headlines?language=en&pageSize=2&apiKey=${process.env.NEWS_API_KEY}`);
-    const data = await res.json();
+    const res = await fetch("https://feeds.bbci.co.uk/news/world/rss.xml");
+    const xml = await res.text();
 
-    console.log("API Response:", JSON.stringify(data));
+    const parser = new xml2js.Parser();
+    const data = await parser.parseStringPromise(xml);
 
-    if (data.status === "ok" && data.articles) {
-      return data.articles;
-    } else {
-      console.log("News API error:", data);
-      return [];
-    }
+    const items = data.rss.channel[0].item;
+
+    return items.slice(0, 2).map(n => ({
+      title: n.title[0],
+      description: n.description[0],
+      urlToImage: ""
+    }));
 
   } catch (e) {
-    console.log("Fetch error:", e);
+    console.log("RSS error:", e);
     return [];
   }
 }
 
-// 🤖 AI Call
+// AI Call
 async function callAI(prompt) {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -47,21 +50,15 @@ async function callAI(prompt) {
     });
 
     const data = await res.json();
-
-    if (!data.choices) {
-      console.log("AI error:", data);
-      return null;
-    }
-
     return data.choices[0].message.content;
 
   } catch (e) {
-    console.log("AI call error:", e);
+    console.log("AI error:", e);
     return null;
   }
 }
 
-// 🧾 Generate Brief
+// Generate Brief
 async function generateBrief(article) {
   const prompt = `
 Convert into UPSC format JSON:
@@ -82,15 +79,14 @@ Description: ${article.description}
   try {
     return JSON.parse(result);
   } catch {
-    console.log("Brief parse error:", result);
     return null;
   }
 }
 
-// ❓ Generate MCQ
+// Generate MCQ
 async function generateMCQ(brief) {
   const prompt = `
-Generate 3 MCQs in JSON format:
+Generate 3 MCQs JSON:
 
 [
 {
@@ -109,52 +105,40 @@ Text: ${brief}
   try {
     return JSON.parse(result);
   } catch {
-    console.log("MCQ parse error:", result);
     return [];
   }
 }
 
-// 🚀 MAIN
+// MAIN
 async function run() {
 
   const newsList = await fetchNews();
 
-  if (!newsList || newsList.length === 0) {
-    console.log("❌ No news found");
-
+  if (!newsList.length) {
     await db.collection("TrendingNews")
       .doc("latest")
       .set({
-        message: "No news available",
+        message: "RSS failed",
         updatedAt: new Date()
       });
-
     return;
   }
 
   const articles = [];
 
   for (let n of newsList) {
-    if (!n.title) continue;
+    const brief = await generateBrief(n);
+    if (!brief) continue;
 
-    try {
-      const brief = await generateBrief(n);
-      if (!brief) continue;
+    const mcq = await generateMCQ(brief.NewsBriefEnglish);
 
-      const mcq = await generateMCQ(brief.NewsBriefEnglish);
-
-      articles.push({
-        ...brief,
-        NewsPic: n.urlToImage || "",
-        MCQ: mcq
-      });
-
-    } catch (e) {
-      console.log("Processing error:", e);
-    }
+    articles.push({
+      ...brief,
+      NewsPic: "",
+      MCQ: mcq
+    });
   }
 
-  // 🔥 Always update Firebase
   await db.collection("TrendingNews")
     .doc("latest")
     .set({
@@ -162,7 +146,7 @@ async function run() {
       articles: articles
     });
 
-  console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
+  console.log("🔥 RSS DATA UPDATED");
 }
 
 run();
