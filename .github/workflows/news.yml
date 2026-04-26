@@ -1,7 +1,7 @@
 name: Trending News Update
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # manual run
   schedule:
     - cron: "0 * * * *"   # every hour
 
@@ -18,10 +18,12 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install dependencies   # 👈 IMPORTANT
+      - name: Install dependencies
         run: npm install
 
       - name: Run script
         run: node index.js
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}   # optional (RSS use कर रहे हो तो ignore भी कर सकते हो)
