@@ -10,17 +10,18 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// 📰 Fetch News (SAFE)
+// 📰 Fetch News
 async function fetchNews() {
   try {
     const res = await fetch(`https://newsapi.org/v2/top-headlines?language=en&pageSize=2&apiKey=${process.env.NEWS_API_KEY}`);
     const data = await res.json();
 
-    console.log("API Response:", data);
+    console.log("API Response:", JSON.stringify(data));
 
-    if (data && data.articles) {
+    if (data.status === "ok" && data.articles) {
       return data.articles;
     } else {
+      console.log("News API error:", data);
       return [];
     }
 
@@ -48,7 +49,7 @@ async function callAI(prompt) {
     const data = await res.json();
 
     if (!data.choices) {
-      console.log("AI Error:", data);
+      console.log("AI error:", data);
       return null;
     }
 
@@ -63,25 +64,25 @@ async function callAI(prompt) {
 // 🧾 Generate Brief
 async function generateBrief(article) {
   const prompt = `
-Convert into UPSC format:
+Convert into UPSC format JSON:
 
-1. NewsHeaderEnglish
-2. NewsHeaderHindi
-3. NewsBriefEnglish (minimum 200 words)
-4. NewsBriefHindi (minimum 200 words)
+{
+"NewsHeaderEnglish":"",
+"NewsHeaderHindi":"",
+"NewsBriefEnglish":"",
+"NewsBriefHindi":""
+}
 
 Title: ${article.title}
 Description: ${article.description}
-
-Return JSON only.
 `;
 
   const result = await callAI(prompt);
 
   try {
     return JSON.parse(result);
-  } catch (e) {
-    console.log("JSON parse error (Brief):", result);
+  } catch {
+    console.log("Brief parse error:", result);
     return null;
   }
 }
@@ -89,31 +90,45 @@ Return JSON only.
 // ❓ Generate MCQ
 async function generateMCQ(brief) {
   const prompt = `
-Generate 5 UPSC MCQs in English & Hindi with 4 options and correct answer.
+Generate 3 MCQs in JSON format:
 
-${brief}
+[
+{
+"question_en":"",
+"question_hi":"",
+"options":["A","B","C","D"],
+"answer":"A"
+}
+]
 
-Return JSON array.
+Text: ${brief}
 `;
 
   const result = await callAI(prompt);
 
   try {
     return JSON.parse(result);
-  } catch (e) {
-    console.log("JSON parse error (MCQ):", result);
+  } catch {
+    console.log("MCQ parse error:", result);
     return [];
   }
 }
 
-// 🚀 MAIN FUNCTION
+// 🚀 MAIN
 async function run() {
 
   const newsList = await fetchNews();
 
-  // ✅ Safe check
   if (!newsList || newsList.length === 0) {
-    console.log("No news found ❌");
+    console.log("❌ No news found");
+
+    await db.collection("TrendingNews")
+      .doc("latest")
+      .set({
+        message: "No news available",
+        updatedAt: new Date()
+      });
+
     return;
   }
 
@@ -124,7 +139,6 @@ async function run() {
 
     try {
       const brief = await generateBrief(n);
-
       if (!brief) continue;
 
       const mcq = await generateMCQ(brief.NewsBriefEnglish);
@@ -140,7 +154,7 @@ async function run() {
     }
   }
 
-  // 🔥 Firebase update (single document replace)
+  // 🔥 Always update Firebase
   await db.collection("TrendingNews")
     .doc("latest")
     .set({
@@ -151,5 +165,4 @@ async function run() {
   console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
 }
 
-// ▶️ RUN
 run();
