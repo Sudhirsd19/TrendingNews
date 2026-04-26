@@ -9,18 +9,15 @@ admin.initializeApp({
 const db = admin.firestore();
 
 async function run() {
-  try {
-    await db.collection("test")
-      .doc("demo")
-      .set({
-        message: "Firebase connected successfully",
-        time: new Date()
-      });
 
-    console.log("Firebase connected ✅");
-  } catch (e) {
-    console.error("ERROR:", e);
-  }
+  await db.collection("TrendingNews")
+    .doc("latest")
+    .set({
+      message: "Now writing in TrendingNews ✅",
+      time: new Date()
+    });
+
+  console.log("Data written to TrendingNews ✅");
 }
 
 run();
