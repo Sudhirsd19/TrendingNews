@@ -9,15 +9,18 @@ admin.initializeApp({
 const db = admin.firestore();
 
 async function run() {
+  try {
+    await db.collection("test")
+      .doc("demo")
+      .set({
+        message: "Firebase connected successfully",
+        time: new Date()
+      });
 
-  await db.collection("test")
-    .doc("demo")
-    .set({
-      message: "Firebase connected successfully",
-      time: new Date()
-    });
-
-  console.log("Firebase connected ✅");
+    console.log("Firebase connected ✅");
+  } catch (e) {
+    console.error("ERROR:", e);
+  }
 }
 
 run();
