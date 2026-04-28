@@ -39,7 +39,7 @@ Convert this news into:
 News:
 ${content}
 
-Return JSON format:
+Return STRICT JSON:
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
@@ -51,7 +51,7 @@ Return JSON format:
 `;
 
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         contents: [
           {
@@ -61,8 +61,7 @@ Return JSON format:
       }
     );
 
-    const text =
-      response.data.candidates[0].content.parts[0].text;
+    const text = response.data.candidates[0].content.parts[0].text;
 
     return JSON.parse(text);
   } catch (err) {
