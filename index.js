@@ -1,19 +1,19 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
 
-// ====== CONFIG ======
+// ===== ENV =====
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const GROQ_API_KEY = process.env.OPENAI_KEY; // same secret name use kar sakte ho
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const FIREBASE_KEY = JSON.parse(process.env.FIREBASE_KEY);
 
-// ====== FIREBASE INIT ======
+// ===== FIREBASE INIT =====
 admin.initializeApp({
   credential: admin.credential.cert(FIREBASE_KEY)
 });
 
 const db = admin.firestore();
 
-// ====== GET NEWS ======
+// ===== GET NEWS =====
 async function getNews() {
   const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=${NEWS_API_KEY}`;
   
@@ -23,42 +23,39 @@ async function getNews() {
   return res.data.articles || [];
 }
 
-// ====== GROQ AI FUNCTION ======
+// ===== GROQ AI =====
 async function generateAI(news) {
   try {
     const prompt = `
-Convert this news into JSON format:
+Convert this news into JSON:
 
 Title: ${news.title}
 Description: ${news.description}
 
-Return JSON:
+Rules:
+- English + Hindi both
+- Description minimum 150 words
+- UPSC level MCQs (5 questions each)
+
+Format:
 {
 "NewsTittle_en": "",
 "NewsTittle_hi": "",
-"NewsDesc_en": "minimum 150 words",
-"NewsDesc_hi": "minimum 150 words",
+"NewsDesc_en": "",
+"NewsDesc_hi": "",
 "MCQ_en": [
-  {
-    "question": "",
-    "options": ["A","B","C","D"],
-    "answer": ""
-  }
+  {"question":"","options":["A","B","C","D"],"answer":""}
 ],
 "MCQ_hi": [
-  {
-    "question": "",
-    "options": ["A","B","C","D"],
-    "answer": ""
-  }
+  {"question":"","options":["A","B","C","D"],"answer":""}
 ]
 }
 `;
 
-    const response = await axios.post(
+    const res = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
-        model: "llama3-8b-8192",   // ✅ WORKING MODEL (IMPORTANT)
+        model: "llama3-8b-8192", // ✅ working model
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7
       },
@@ -70,9 +67,8 @@ Return JSON:
       }
     );
 
-    let text = response.data.choices[0].message.content;
+    let text = res.data.choices[0].message.content;
 
-    // JSON clean
     text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
     return JSON.parse(text);
@@ -83,25 +79,24 @@ Return JSON:
   }
 }
 
-// ====== MAIN FUNCTION ======
+// ===== MAIN =====
 async function main() {
   const articles = await getNews();
-
   let finalData = [];
 
   for (let news of articles) {
     console.log("📰 Processing:", news.title);
 
-    const aiData = await generateAI(news);
+    const ai = await generateAI(news);
 
-    if (aiData) {
+    if (ai) {
       finalData.push({
-        NewsTittle_en: aiData.NewsTittle_en,
-        NewsTittle_hi: aiData.NewsTittle_hi,
-        NewsDesc_en: aiData.NewsDesc_en,
-        NewsDesc_hi: aiData.NewsDesc_hi,
-        MCQ_en: aiData.MCQ_en,
-        MCQ_hi: aiData.MCQ_hi,
+        NewsTittle_en: ai.NewsTittle_en,
+        NewsTittle_hi: ai.NewsTittle_hi,
+        NewsDesc_en: ai.NewsDesc_en,
+        NewsDesc_hi: ai.NewsDesc_hi,
+        MCQ_en: ai.MCQ_en,
+        MCQ_hi: ai.MCQ_hi,
         NewsPic: news.urlToImage || ""
       });
     }
@@ -114,7 +109,6 @@ async function main() {
     return;
   }
 
-  // ===== FIREBASE UPDATE =====
   await db.collection("news").doc("latest").set({
     articles: finalData,
     updatedAt: new Date()
