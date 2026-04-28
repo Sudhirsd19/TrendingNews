@@ -1,127 +1,110 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
 
-// 🔐 Firebase Init
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+// ====== CONFIG ======
+const NEWS_API_KEY = process.env.NEWS_API_KEY;
+const GROQ_API_KEY = process.env.OPENAI_KEY; // same secret name use kar sakte ho
+const FIREBASE_KEY = JSON.parse(process.env.FIREBASE_KEY);
 
+// ====== FIREBASE INIT ======
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert(FIREBASE_KEY)
 });
 
 const db = admin.firestore();
 
-// 🌍 Fetch News
-async function fetchNews() {
-  try {
-    const url = `https://newsapi.org/v2/everything?q=world&sortBy=publishedAt&pageSize=10&apiKey=${process.env.NEWS_API_KEY}`;
-    const res = await axios.get(url);
+// ====== GET NEWS ======
+async function getNews() {
+  const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=${NEWS_API_KEY}`;
+  
+  const res = await axios.get(url);
+  console.log("API Response:", res.data);
 
-    console.log("API Response:", res.data);
-
-    return res.data.articles || [];
-  } catch (err) {
-    console.log("News Fetch Error:", err.message);
-    return [];
-  }
+  return res.data.articles || [];
 }
 
-// 🤖 GROQ AI CALL
-async function callAI(prompt) {
+// ====== GROQ AI FUNCTION ======
+async function generateAI(news) {
   try {
-    const res = await axios.post(
+    const prompt = `
+Convert this news into JSON format:
+
+Title: ${news.title}
+Description: ${news.description}
+
+Return JSON:
+{
+"NewsTittle_en": "",
+"NewsTittle_hi": "",
+"NewsDesc_en": "minimum 150 words",
+"NewsDesc_hi": "minimum 150 words",
+"MCQ_en": [
+  {
+    "question": "",
+    "options": ["A","B","C","D"],
+    "answer": ""
+  }
+],
+"MCQ_hi": [
+  {
+    "question": "",
+    "options": ["A","B","C","D"],
+    "answer": ""
+  }
+]
+}
+`;
+
+    const response = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
-        model: "mixtral-8x7b-32768",
+        model: "llama3-8b-8192",   // ✅ WORKING MODEL (IMPORTANT)
         messages: [{ role: "user", content: prompt }],
+        temperature: 0.7
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json"
+        }
       }
     );
 
-    return res.data.choices[0].message.content;
+    let text = response.data.choices[0].message.content;
+
+    // JSON clean
+    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+
+    return JSON.parse(text);
+
   } catch (err) {
     console.log("AI ERROR:", err.response?.data || err.message);
     return null;
   }
 }
 
-// 🧠 Generate Content (Hindi + English + MCQ)
-async function generateContent(article) {
-  const prompt = `
-Return ONLY JSON:
-
-{
-"NewsTittle_en":"",
-"NewsTittle_hi":"",
-"NewsDesc_en":"",
-"NewsDesc_hi":"",
-"MCQ_en":[
-  {
-    "question":"",
-    "options":["A","B","C","D"],
-    "answer":"A"
-  }
-],
-"MCQ_hi":[
-  {
-    "question":"",
-    "options":["A","B","C","D"],
-    "answer":"A"
-  }
-]
-}
-
-Rules:
-- Description minimum 150 words (strictly follow)
-- Description should be detailed (150–250 words)
-- Generate maximum MCQs (at least 5-10)
-- Questions must be UPSC level
-- Hindi must be proper translation
-
-News:
-${article.title}
-${article.description}
-`;
-
-  const result = await callAI(prompt);
-
-  if (!result) return null;
-
-  try {
-    const clean = result.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (err) {
-    console.log("Parse Error:", result);
-    return null;
-  }
-}
-
-// 🚀 MAIN FUNCTION
-(async () => {
-  const newsList = await fetchNews();
-
-  if (newsList.length === 0) {
-    console.log("❌ No news found");
-    return;
-  }
+// ====== MAIN FUNCTION ======
+async function main() {
+  const articles = await getNews();
 
   let finalData = [];
 
-  for (let n of newsList.slice(0, 10)) {
-    console.log("📰 Processing:", n.title);
+  for (let news of articles) {
+    console.log("📰 Processing:", news.title);
 
-    const aiData = await generateContent(n);
+    const aiData = await generateAI(news);
 
-    if (!aiData) continue;
-
-    finalData.push({
-      ...aiData,
-      NewsPic: n.urlToImage || "",
-    });
+    if (aiData) {
+      finalData.push({
+        NewsTittle_en: aiData.NewsTittle_en,
+        NewsTittle_hi: aiData.NewsTittle_hi,
+        NewsDesc_en: aiData.NewsDesc_en,
+        NewsDesc_hi: aiData.NewsDesc_hi,
+        MCQ_en: aiData.MCQ_en,
+        MCQ_hi: aiData.MCQ_hi,
+        NewsPic: news.urlToImage || ""
+      });
+    }
   }
 
   console.log("Final Data:", finalData.length);
@@ -131,11 +114,13 @@ ${article.description}
     return;
   }
 
-  // 🔥 Replace old data (Single Document)
-  await db.collection("TrendingNews").doc("latest").set({
+  // ===== FIREBASE UPDATE =====
+  await db.collection("news").doc("latest").set({
     articles: finalData,
-    updatedAt: new Date(),
+    updatedAt: new Date()
   });
 
-  console.log("🔥 FINAL DATA WITH MCQ UPDATED SUCCESSFULLY");
-})();
+  console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
+}
+
+main();
