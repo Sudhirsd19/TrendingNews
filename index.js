@@ -36,14 +36,13 @@ async function generateAI(prompt) {
 
         let text = res.data.candidates[0].content.parts[0].text;
 
-        // 🔥 Clean JSON
+        // clean markdown
         text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
         return text;
 
       } catch (err) {
-        console.log(`⚠️ Retry failed`);
-
+        console.log("⚠️ Retry failed");
         await new Promise(r => setTimeout(r, 2000));
       }
     }
@@ -53,13 +52,13 @@ async function generateAI(prompt) {
 }
 
 // 📰 Fetch News
-async function fetchNews() {
+async function fetchNews(page = 1) {
   try {
     const res = await axios.get(
-      `https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=${NEWS_API_KEY}`
+      `https://newsapi.org/v2/top-headlines?language=en&pageSize=20&page=${page}&apiKey=${NEWS_API_KEY}`
     );
 
-    console.log("API:", res.data.status, res.data.totalResults);
+    console.log(`📰 API Page ${page}:`, res.data.totalResults);
     return res.data.articles;
 
   } catch (err) {
@@ -68,23 +67,26 @@ async function fetchNews() {
   }
 }
 
-// 🚀 Main
+// 🚀 MAIN
 async function run() {
-  const articles = await fetchNews();
+  let finalData = [];
+  let page = 1;
 
-  if (!articles.length) {
-    console.log("❌ No News Found");
-    return;
-  }
+  while (finalData.length < 10) {
+    const articles = await fetchNews(page);
+    if (!articles.length) break;
 
-  const finalData = [];
+    let index = 0;
 
-  for (let news of articles) {
-    if (!news.title || !news.description) continue;
+    while (finalData.length < 10 && index < articles.length) {
+      const news = articles[index];
+      index++;
 
-    console.log("📰", news.title);
+      if (!news.title || !news.description) continue;
 
-    const prompt = `
+      console.log(`📰 (${finalData.length + 1}/10):`, news.title);
+
+      const prompt = `
 Convert this news into UPSC format.
 
 News:
@@ -115,38 +117,42 @@ Return ONLY VALID JSON:
 }
 
 Rules:
-- 150+ words description (EN + HI)
+- English & Hindi description minimum 150 words
 - Exactly 3 MCQs each
 - No markdown
 `;
 
-    const aiText = await generateAI(prompt);
+      const aiText = await generateAI(prompt);
 
-    if (!aiText || aiText.length < 50) continue;
+      if (!aiText || aiText.length < 50) continue;
 
-    try {
-      const clean = aiText
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
+      try {
+        const clean = aiText
+          .replace(/```json/g, "")
+          .replace(/```/g, "")
+          .trim();
 
-      const json = JSON.parse(clean);
+        const json = JSON.parse(clean);
 
-      finalData.push({
-        ...json,
-        NewsPic: news.urlToImage || "",
-        createdAt: new Date().toISOString(),
-      });
+        finalData.push({
+          ...json,
+          NewsPic: news.urlToImage || "",
+          createdAt: new Date().toISOString(),
+        });
 
-    } catch (e) {
-      console.log("❌ JSON ERROR");
+      } catch (e) {
+        console.log("❌ JSON ERROR");
+        continue;
+      }
+
+      // ⏳ delay (important)
+      await new Promise(r => setTimeout(r, 1500));
     }
 
-    // ⏳ delay (rate limit safe)
-    await new Promise(r => setTimeout(r, 1500));
+    page++; // next page if needed
   }
 
-  console.log("Final Data:", finalData.length);
+  console.log("✅ Final Data Count:", finalData.length);
 
   // 🔥 Upload to Firebase
   for (let item of finalData) {
@@ -154,10 +160,11 @@ Rules:
   }
 
   if (finalData.length > 0) {
-    console.log("🔥 SUCCESS");
+    console.log("🔥 SUCCESS: Data Uploaded");
   } else {
-    console.log("❌ No AI Data");
+    console.log("❌ No Data Generated");
   }
 }
 
+// 🚀 RUN
 run();
