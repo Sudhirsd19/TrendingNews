@@ -1,7 +1,6 @@
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 
-// 🔥 Firebase init
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
@@ -10,51 +9,50 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// 📰 Fetch News (FIXED)
+// 🔄 Hindi translate function (FREE)
+async function translateToHindi(text) {
+  try {
+    const res = await fetch(
+      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|hi`
+    );
+    const data = await res.json();
+    return data.responseData.translatedText || text;
+  } catch {
+    return text;
+  }
+}
+
+// 📰 Fetch News
 async function fetchNews() {
   try {
     const url = `https://newsapi.org/v2/everything?q=india&sortBy=publishedAt&pageSize=5&apiKey=${process.env.NEWS_API_KEY}`;
-
     const res = await fetch(url);
     const data = await res.json();
 
-    console.log("📡 API Response:", data);
+    if (!data || data.status !== "ok") return [];
+    return data.articles || [];
 
-    // ❌ API error
-    if (!data || data.status !== "ok") {
-      console.log("❌ API ERROR:", data);
-      return [];
-    }
-
-    // ❌ No articles
-    if (!data.articles || data.articles.length === 0) {
-      console.log("❌ No articles found");
-      return [];
-    }
-
-    return data.articles;
-
-  } catch (e) {
-    console.log("❌ Fetch error:", e);
+  } catch {
     return [];
   }
 }
 
-// 🚀 Main function
+// 🚀 Main
 async function run() {
   const newsList = await fetchNews();
-
-  if (!newsList || newsList.length === 0) {
-    console.log("⚠️ No news received, skipping update");
-    return;
-  }
 
   let finalData = [];
 
   for (let n of newsList) {
+
+    const title_hi = await translateToHindi(n.title || "");
+    const desc_hi = await translateToHindi(n.description || "");
+
     finalData.push({
-      title: n.title || "",
-      description: n.description || "",
+      title_en: n.title || "",
+      title_hi: title_hi,
+      description_en: n.description || "",
+      description_hi: desc_hi,
       url: n.url || "",
       image: n.urlToImage || "",
       source: n.source?.name || "",
@@ -62,16 +60,12 @@ async function run() {
     });
   }
 
-  console.log("🧾 Final Data:", finalData);
-
-  // 🔥 Firestore update
   await db.collection("TrendingNews").doc("latest").set({
     articles: finalData,
     updatedAt: new Date()
   });
 
-  console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
+  console.log("🔥 Hindi News Updated Successfully");
 }
 
-// ▶️ Run
 run();
