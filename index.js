@@ -1,26 +1,21 @@
 const axios = require("axios");
-const express = require("express");
-
-const app = express();
-app.use(express.json());
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🔹 Fetch News
-async function getNews() {
-  const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`;
-  const res = await axios.get(url);
-  return res.data.articles;
-}
+const NEWS_URL = `https://newsapi.org/v2/top-headlines?language=en&pageSize=20&apiKey=${NEWS_API_KEY}`;
 
-// 🔹 Gemini Call (Retry)
+// ✅ Gemini API call with retry
 async function callGemini(prompt, retry = 3) {
   try {
     const res = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
-        contents: [{ parts: [{ text: prompt }] }]
+        contents: [
+          {
+            parts: [{ text: prompt }]
+          }
+        ]
       }
     );
 
@@ -28,58 +23,52 @@ async function callGemini(prompt, retry = 3) {
 
   } catch (err) {
     if (retry > 0) {
+      console.log("🔁 Retry Gemini...");
       await new Promise(r => setTimeout(r, 2000));
       return callGemini(prompt, retry - 1);
     }
+    console.log("❌ GEMINI ERROR:", err.response?.data || err.message);
     return null;
   }
 }
 
-// 🔹 JSON Cleaner
+// ✅ Clean JSON parser
 function cleanJSON(text) {
   try {
     return JSON.parse(text);
   } catch {
     try {
-      return JSON.parse(text.replace(/```json|```/g, ""));
+      const fixed = text.replace(/```json|```/g, "");
+      return JSON.parse(fixed);
     } catch {
       return null;
     }
   }
 }
 
-// 🔹 Duplicate Title Filter
-function isDuplicate(title, existing) {
-  return existing.some(n =>
-    n.NewsTitle_en.toLowerCase().includes(title.toLowerCase().slice(0, 20))
-  );
-}
-
-// 🔹 AI Generate
+// ✅ Generate AI Content
 async function generateNews(article) {
 
   const prompt = `
-You are UPSC expert content writer.
+You are UPSC content generator.
 
-Return ONLY JSON.
+Return ONLY valid JSON. No explanation.
 
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
 "NewsDesc_en":"",
 "NewsDesc_hi":"",
-"GS_Tag":"",
 "MCQ_en":[{"question":"","options":["","","",""],"answer":""}],
 "MCQ_hi":[{"question":"","options":["","","",""],"answer":""}]
 }
 
 Rules:
-- Hindi must be natural, human-like (not translation)
-- Description min 150 words
-- GS tagging (GS1/GS2/GS3/GS4)
-- Remove duplicate topic
-- Generate 3 MCQs
-- UPSC level
+- English + Hindi both
+- Description minimum 150 words
+- Generate 3 MCQs each
+- UPSC level questions
+- Strict JSON only
 
 News:
 Title: ${article.title}
@@ -87,10 +76,15 @@ Description: ${article.description}
 `;
 
   const text = await callGemini(prompt);
+
   if (!text) return null;
 
   const json = cleanJSON(text);
-  if (!json) return null;
+
+  if (!json) {
+    console.log("❌ JSON ERROR");
+    return null;
+  }
 
   return {
     ...json,
@@ -98,54 +92,50 @@ Description: ${article.description}
   };
 }
 
-// 🔹 MAIN LOGIC
-async function processNews() {
-  const articles = await getNews();
+// ✅ MAIN
+async function main() {
+  try {
+    const newsRes = await axios.get(NEWS_URL);
 
-  let finalData = [];
+    const articles = newsRes.data.articles;
 
-  for (let art of articles) {
-    if (finalData.length >= 10) break;
+    console.log("API Response:", newsRes.data.status, articles.length);
 
-    if (!art.title || !art.description) continue;
+    let finalData = [];
 
-    if (isDuplicate(art.title, finalData)) continue;
+    for (let i = 0; i < articles.length; i++) {
+      if (finalData.length >= 10) break;
 
-    console.log("📰 Processing:", art.title);
+      const art = articles[i];
 
-    const aiData = await generateNews(art);
+      if (!art.title || !art.description) continue;
 
-    if (!aiData) continue;
+      console.log(`📰 Processing (${finalData.length + 1}/10):`, art.title);
 
-    // Topic duplicate filter
-    if (isDuplicate(aiData.NewsTitle_en, finalData)) continue;
+      const aiData = await generateNews(art);
 
-    finalData.push(aiData);
+      if (aiData) {
+        finalData.push(aiData);
+      } else {
+        console.log("⚠️ Skipped...");
+      }
+    }
+
+    console.log("✅ FINAL COUNT:", finalData.length);
+
+    if (finalData.length === 0) {
+      console.log("❌ No AI Data Generated");
+      return;
+    }
+
+    // 👉 Firebase upload (optional)
+    // await uploadToFirebase(finalData);
+
+    console.log("🔥 FINAL DATA READY");
+
+  } catch (err) {
+    console.log("❌ MAIN ERROR:", err.message);
   }
-
-  return finalData;
 }
 
-//
-// 🚀 API FOR YOUR APP
-//
-app.get("/news", async (req, res) => {
-  try {
-    const data = await processNews();
-    res.json({
-      status: "success",
-      count: data.length,
-      data
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-//
-// 🚀 SERVER START
-//
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
-});
+main();
