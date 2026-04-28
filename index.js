@@ -3,7 +3,7 @@ const admin = require("firebase-admin");
 
 // ===== ENV =====
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const FIREBASE_KEY = JSON.parse(process.env.FIREBASE_KEY);
 
 // ===== FIREBASE INIT =====
@@ -23,21 +23,21 @@ async function getNews() {
   return res.data.articles || [];
 }
 
-// ===== GROQ AI =====
+// ===== GEMINI AI =====
 async function generateAI(news) {
   try {
     const prompt = `
-Convert this news into JSON:
+Convert this news into JSON format:
 
 Title: ${news.title}
 Description: ${news.description}
 
 Rules:
-- English + Hindi both
+- English + Hindi
 - Description minimum 150 words
-- UPSC level MCQs (5 questions each)
+- Generate 5 UPSC level MCQs
 
-Format:
+Return ONLY JSON:
 {
 "NewsTittle_en": "",
 "NewsTittle_hi": "",
@@ -53,28 +53,26 @@ Format:
 `;
 
     const res = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
-        model: "llama3-8b-8192", // ✅ working model
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.7
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-          "Content-Type": "application/json"
-        }
+        contents: [
+          {
+            parts: [{ text: prompt }]
+          }
+        ]
       }
     );
 
-    let text = res.data.choices[0].message.content;
+    let text =
+      res.data.candidates[0].content.parts[0].text;
 
+    // Clean JSON
     text = text.replace(/```json/g, "").replace(/```/g, "").trim();
 
     return JSON.parse(text);
 
   } catch (err) {
-    console.log("AI ERROR:", err.response?.data || err.message);
+    console.log("GEMINI ERROR:", err.response?.data || err.message);
     return null;
   }
 }
@@ -85,6 +83,8 @@ async function main() {
   let finalData = [];
 
   for (let news of articles) {
+    if (!news.title || !news.description) continue;
+
     console.log("📰 Processing:", news.title);
 
     const ai = await generateAI(news);
