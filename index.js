@@ -1,13 +1,12 @@
 const axios = require("axios");
+const admin = require("firebase-admin");
 
 // 🔐 ENV
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const FIREBASE_KEY = JSON.parse(process.env.FIREBASE_KEY);
 
-// 🔥 Firebase Setup
-const admin = require("firebase-admin");
-
+// 🔥 Firebase Init
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(FIREBASE_KEY),
@@ -16,25 +15,41 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-// 🧠 Gemini AI Function
+// 🧠 Gemini AI (Retry + Fallback)
 async function generateAI(prompt) {
-  try {
-    const res = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [
-          {
-            parts: [{ text: prompt }],
-          },
-        ],
-      }
-    );
+  const models = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.0-flash"
+  ];
 
-    return res.data.candidates[0].content.parts[0].text;
-  } catch (err) {
-    console.error("❌ GEMINI ERROR:", err.response?.data || err.message);
-    return null;
+  for (let model of models) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`🤖 ${model} | Attempt ${attempt}`);
+
+        const res = await axios.post(
+          `https://generativelanguage.googleapis.com/v1/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }]
+          }
+        );
+
+        let text = res.data.candidates[0].content.parts[0].text;
+
+        // 🔥 Clean JSON
+        text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+
+        return text;
+
+      } catch (err) {
+        console.log(`⚠️ Retry failed`);
+
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
   }
+
+  return null;
 }
 
 // 📰 Fetch News
@@ -44,15 +59,16 @@ async function fetchNews() {
       `https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=${NEWS_API_KEY}`
     );
 
-    console.log("API Response:", res.data.status, res.data.totalResults);
+    console.log("API:", res.data.status, res.data.totalResults);
     return res.data.articles;
+
   } catch (err) {
-    console.error("❌ NEWS API ERROR:", err.message);
+    console.log("❌ News Error:", err.message);
     return [];
   }
 }
 
-// 🔥 Main Processing
+// 🚀 Main
 async function run() {
   const articles = await fetchNews();
 
@@ -63,21 +79,19 @@ async function run() {
 
   const finalData = [];
 
-  for (let i = 0; i < articles.length; i++) {
-    const news = articles[i];
-
+  for (let news of articles) {
     if (!news.title || !news.description) continue;
 
-    console.log(`📰 Processing: ${news.title}`);
+    console.log("📰", news.title);
 
     const prompt = `
-You are a UPSC content creator.
+Convert this news into UPSC format.
 
 News:
-Title: ${news.title}
-Description: ${news.description}
+${news.title}
+${news.description}
 
-Generate strictly JSON:
+Return ONLY VALID JSON:
 
 {
   "NewsTitle_en": "",
@@ -87,31 +101,36 @@ Generate strictly JSON:
   "MCQ_en": [
     {
       "question": "",
-      "options": ["", "", "", ""],
+      "options": ["A","B","C","D"],
       "answer": ""
     }
   ],
   "MCQ_hi": [
     {
       "question": "",
-      "options": ["", "", "", ""],
+      "options": ["A","B","C","D"],
       "answer": ""
     }
   ]
 }
 
 Rules:
-- Description must be minimum 150 words (EN + HI)
-- MCQs should be UPSC level (minimum 3 each)
-- No explanation, only JSON output
+- 150+ words description (EN + HI)
+- Exactly 3 MCQs each
+- No markdown
 `;
 
     const aiText = await generateAI(prompt);
 
-    if (!aiText) continue;
+    if (!aiText || aiText.length < 50) continue;
 
     try {
-      const json = JSON.parse(aiText);
+      const clean = aiText
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim();
+
+      const json = JSON.parse(clean);
 
       finalData.push({
         ...json,
@@ -120,9 +139,11 @@ Rules:
       });
 
     } catch (e) {
-      console.log("❌ JSON PARSE ERROR");
-      console.log(aiText);
+      console.log("❌ JSON ERROR");
     }
+
+    // ⏳ delay (rate limit safe)
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   console.log("Final Data:", finalData.length);
@@ -133,11 +154,10 @@ Rules:
   }
 
   if (finalData.length > 0) {
-    console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
+    console.log("🔥 SUCCESS");
   } else {
-    console.log("❌ No AI Data Generated");
+    console.log("❌ No AI Data");
   }
 }
 
-// 🚀 Run
 run();
