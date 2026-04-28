@@ -1,105 +1,101 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
 
-// ===== ENV =====
-const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const FIREBASE_KEY = JSON.parse(process.env.FIREBASE_KEY);
+// 🔥 Firebase Init
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
-// ===== FIREBASE INIT =====
 admin.initializeApp({
-  credential: admin.credential.cert(FIREBASE_KEY)
+  credential: admin.credential.cert(serviceAccount),
 });
 
 const db = admin.firestore();
 
-// ===== GET NEWS =====
+// 🔥 Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+// 🔥 News API
+const NEWS_API_KEY = process.env.NEWS_API_KEY;
+
+// 👉 Fetch News
 async function getNews() {
   const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=10&apiKey=${NEWS_API_KEY}`;
-  
   const res = await axios.get(url);
-  console.log("API Response:", res.data);
-
-  return res.data.articles || [];
+  return res.data.articles;
 }
 
-// ===== GEMINI AI =====
-async function generateAI(news) {
+// 👉 Gemini Generate Function
+async function generateAI(content) {
   try {
     const prompt = `
-Convert this news into JSON format:
+Convert this news into:
 
-Title: ${news.title}
-Description: ${news.description}
+1. English Title
+2. Hindi Title
+3. English Description (minimum 150 words)
+4. Hindi Description (minimum 150 words)
+5. 3 UPSC-style MCQs in English
+6. 3 UPSC-style MCQs in Hindi
 
-Rules:
-- English + Hindi
-- Description minimum 150 words
-- Generate 5 UPSC level MCQs
+News:
+${content}
 
-Return ONLY JSON:
+Return JSON format:
 {
-"NewsTittle_en": "",
-"NewsTittle_hi": "",
-"NewsDesc_en": "",
-"NewsDesc_hi": "",
-"MCQ_en": [
-  {"question":"","options":["A","B","C","D"],"answer":""}
-],
-"MCQ_hi": [
-  {"question":"","options":["A","B","C","D"],"answer":""}
-]
+"NewsTitle_en":"",
+"NewsTitle_hi":"",
+"NewsDesc_en":"",
+"NewsDesc_hi":"",
+"MCQ_en":[],
+"MCQ_hi":[]
 }
 `;
 
-    const res = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [
           {
-            parts: [{ text: prompt }]
-          }
-        ]
+            parts: [{ text: prompt }],
+          },
+        ],
       }
     );
 
-    let text =
-      res.data.candidates[0].content.parts[0].text;
-
-    // Clean JSON
-    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    const text =
+      response.data.candidates[0].content.parts[0].text;
 
     return JSON.parse(text);
-
   } catch (err) {
     console.log("GEMINI ERROR:", err.response?.data || err.message);
     return null;
   }
 }
 
-// ===== MAIN =====
-async function main() {
-  const articles = await getNews();
+// 👉 Main Function
+async function run() {
+  const news = await getNews();
+
   let finalData = [];
 
-  for (let news of articles) {
-    if (!news.title || !news.description) continue;
+  for (let article of news) {
+    console.log("📰 Processing:", article.title);
 
-    console.log("📰 Processing:", news.title);
+    const ai = await generateAI(
+      article.title + " " + article.description
+    );
 
-    const ai = await generateAI(news);
+    if (!ai) continue;
 
-    if (ai) {
-      finalData.push({
-        NewsTittle_en: ai.NewsTittle_en,
-        NewsTittle_hi: ai.NewsTittle_hi,
-        NewsDesc_en: ai.NewsDesc_en,
-        NewsDesc_hi: ai.NewsDesc_hi,
-        MCQ_en: ai.MCQ_en,
-        MCQ_hi: ai.MCQ_hi,
-        NewsPic: news.urlToImage || ""
-      });
-    }
+    finalData.push({
+      NewsTitle_en: ai.NewsTitle_en,
+      NewsTitle_hi: ai.NewsTitle_hi,
+      NewsDesc_en: ai.NewsDesc_en,
+      NewsDesc_hi: ai.NewsDesc_hi,
+      MCQ_en: ai.MCQ_en,
+      MCQ_hi: ai.MCQ_hi,
+      NewsPic: article.urlToImage || "",
+      updatedAt: new Date(),
+    });
   }
 
   console.log("Final Data:", finalData.length);
@@ -111,10 +107,10 @@ async function main() {
 
   await db.collection("news").doc("latest").set({
     articles: finalData,
-    updatedAt: new Date()
+    updatedAt: new Date(),
   });
 
   console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
 }
 
-main();
+run();
