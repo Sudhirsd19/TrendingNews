@@ -1,7 +1,7 @@
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 
-// Firebase init
+// 🔥 Firebase init
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
@@ -10,30 +10,44 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Fetch news
+// 📰 Fetch News (FIXED)
 async function fetchNews() {
   try {
-    const res = await fetch(
-      `https://newsapi.org/v2/top-headlines?country=in&pageSize=5&apiKey=${process.env.NEWS_API_KEY}`
-    );
+    const url = `https://newsapi.org/v2/everything?q=india&sortBy=publishedAt&pageSize=5&apiKey=${process.env.NEWS_API_KEY}`;
+
+    const res = await fetch(url);
     const data = await res.json();
 
-    console.log("API Response:", data);
+    console.log("📡 API Response:", data);
 
-    if (data && data.articles) {
-      return data.articles;
-    } else {
+    // ❌ API error
+    if (!data || data.status !== "ok") {
+      console.log("❌ API ERROR:", data);
       return [];
     }
+
+    // ❌ No articles
+    if (!data.articles || data.articles.length === 0) {
+      console.log("❌ No articles found");
+      return [];
+    }
+
+    return data.articles;
+
   } catch (e) {
-    console.log("Fetch error:", e);
+    console.log("❌ Fetch error:", e);
     return [];
   }
 }
 
-// Main run
+// 🚀 Main function
 async function run() {
   const newsList = await fetchNews();
+
+  if (!newsList || newsList.length === 0) {
+    console.log("⚠️ No news received, skipping update");
+    return;
+  }
 
   let finalData = [];
 
@@ -48,8 +62,9 @@ async function run() {
     });
   }
 
-  console.log("Final Data:", finalData);
+  console.log("🧾 Final Data:", finalData);
 
+  // 🔥 Firestore update
   await db.collection("TrendingNews").doc("latest").set({
     articles: finalData,
     updatedAt: new Date()
@@ -58,4 +73,5 @@ async function run() {
   console.log("🔥 FINAL DATA UPDATED SUCCESSFULLY");
 }
 
+// ▶️ Run
 run();
