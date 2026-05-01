@@ -1,7 +1,4 @@
 const axios = require("axios");
-const express = require("express");
-
-const app = express();
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -12,6 +9,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 async function getNews() {
   const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`;
   const res = await axios.get(url);
+  console.log("API Response:", res.data.status, res.data.articles.length);
   return res.data.articles;
 }
 
@@ -33,7 +31,7 @@ async function callGemini(prompt, retry = 3) {
     console.log("❌ GEMINI ERROR:", err.response?.data || err.message);
 
     if (retry > 0) {
-      console.log("🔁 Retrying...");
+      console.log("🔁 Retrying Gemini...");
       await new Promise(r => setTimeout(r, 2000));
       return callGemini(prompt, retry - 1);
     }
@@ -62,10 +60,10 @@ function cleanJSON(text) {
 // =========================
 function fallbackNews(article) {
   return {
-    NewsTitle_en: article.title,
+    NewsTitle_en: article.title || "",
     NewsTitle_hi: "यह समाचार महत्वपूर्ण है",
     NewsDesc_en: article.description || "No description available",
-    NewsDesc_hi: "यह समाचार वर्तमान घटनाओं से संबंधित है और परीक्षा के दृष्टिकोण से महत्वपूर्ण है।",
+    NewsDesc_hi: "यह समसामयिक घटना परीक्षा की दृष्टि से महत्वपूर्ण है।",
     GS_Tag: "GS2",
     MCQ_en: [],
     MCQ_hi: [],
@@ -84,12 +82,12 @@ function isDuplicate(title, existing) {
 }
 
 // =========================
-// 🔹 AI GENERATION
+// 🔹 AI GENERATE
 // =========================
 async function generateNews(article) {
 
   const prompt = `
-Generate UPSC style news in JSON.
+Generate UPSC style news in JSON format.
 
 {
 "NewsTitle_en":"",
@@ -104,8 +102,8 @@ Generate UPSC style news in JSON.
 Rules:
 - Hindi must be natural (not translation)
 - Description minimum 150 words
-- GS tagging (GS1/GS2/GS3/GS4)
-- 3 MCQs each
+- GS tagging required (GS1/GS2/GS3/GS4)
+- Generate 3 MCQs
 - Return valid JSON only
 
 News:
@@ -115,9 +113,10 @@ Description: ${article.description}
 
   const text = await callGemini(prompt);
 
-  console.log("🔍 RAW AI:", text?.slice(0, 150));
+  console.log("🔍 RAW AI:", text ? text.slice(0, 120) : "No response");
 
   if (!text) {
+    console.log("⚠️ Using fallback (no AI)");
     return fallbackNews(article);
   }
 
@@ -137,66 +136,44 @@ Description: ${article.description}
 // =========================
 // 🔹 MAIN PROCESS
 // =========================
-async function processNews() {
-  const articles = await getNews();
-
-  let finalData = [];
-
-  for (let art of articles) {
-
-    if (finalData.length >= 10) break;
-
-    if (!art.title || !art.description) continue;
-
-    if (isDuplicate(art.title, finalData)) continue;
-
-    console.log(`📰 Processing (${finalData.length + 1}/10):`, art.title);
-
-    const aiData = await generateNews(art);
-
-    if (!aiData) continue;
-
-    if (isDuplicate(aiData.NewsTitle_en, finalData)) continue;
-
-    finalData.push(aiData);
-  }
-
-  console.log("✅ FINAL COUNT:", finalData.length);
-
-  return finalData;
-}
-
-// =========================
-// 🚀 API FOR APP
-// =========================
-app.get("/news", async (req, res) => {
+async function main() {
   try {
-    const data = await processNews();
+    const articles = await getNews();
 
-    if (data.length === 0) {
-      return res.json({
-        status: "fallback",
-        message: "AI failed, showing basic news",
-        data: []
-      });
+    let finalData = [];
+
+    for (let art of articles) {
+
+      if (finalData.length >= 10) break;
+
+      if (!art.title || !art.description) continue;
+
+      if (isDuplicate(art.title, finalData)) continue;
+
+      console.log(`📰 Processing (${finalData.length + 1}/10):`, art.title);
+
+      const aiData = await generateNews(art);
+
+      if (!aiData) continue;
+
+      if (isDuplicate(aiData.NewsTitle_en, finalData)) continue;
+
+      finalData.push(aiData);
     }
 
-    res.json({
-      status: "success",
-      count: data.length,
-      data
-    });
+    console.log("✅ FINAL COUNT:", finalData.length);
+
+    if (finalData.length === 0) {
+      console.log("❌ No AI Data Generated");
+      return;
+    }
+
+    console.log("🔥 FINAL OUTPUT:\n");
+    console.log(JSON.stringify(finalData, null, 2));
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.log("❌ MAIN ERROR:", err.message);
   }
-});
+}
 
-// =========================
-// 🚀 SERVER START
-// =========================
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
-});
+main();
