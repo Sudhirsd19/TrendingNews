@@ -1,6 +1,9 @@
 {
+  "name": "trendingnews",
+  "version": "1.0.0",
+  "main": "index.js",
   "dependencies": {
-    "axios": "^1.0.0",
+    "axios": "^1.6.0",
     "firebase-admin": "^12.0.0"
   }
 }
