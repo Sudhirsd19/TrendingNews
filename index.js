@@ -1,13 +1,14 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
 
-// 🔑 ENV
+// 🔑 ENV KEYS
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// 🔥 Firebase JSON file (BEST METHOD)
-const serviceAccount = require("./serviceAccountKey.json");
+// 🔥 🔥 YAHI DALNA THA (IMPORTANT)
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
+// 🔥 Firebase Init
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 });
@@ -23,7 +24,7 @@ const USE_AI = true;
 // 🔥 Delay
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// 🔥 JSON extract
+// 🔥 JSON Extract
 function extractJSON(text) {
   try {
     if (!text) return null;
