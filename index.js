@@ -129,7 +129,7 @@ async function run() {
 
     // 🔥 GLOBAL TRENDING NEWS (IMPORTANT CHANGE)
     const newsRes = await axios.get(
-      'https://newsapi.org/v2/everything?q=world&sortBy=publishedAt&pageSize=50?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`
+      `https://newsapi.org/v2/everything?q=global&sortBy=publishedAt&pageSize=50&apiKey=${NEWS_API_KEY}`
     );
 
     const articles = newsRes.data.articles;
@@ -142,7 +142,12 @@ async function run() {
 
       const article = articles[i];
 
-      if (!article.title || usedTitles.has(article.title)) continue;
+      if (!article.title) continue;
+
+      // simple duplicate check
+      if (usedTitles.has(article.title.toLowerCase())) continue;
+
+usedTitles.add(article.title.toLowerCase());
 
       // ❌ ignore useless news
       if (!article.description) continue;
