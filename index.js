@@ -64,17 +64,19 @@ async function callGemini(prompt, retry = 2) {
   }
 }
 
-// 🔥 SHORT SUMMARY PROMPT
+// 🔥 PROMPT (TRENDING + SUMMARY + MCQ)
 function createPrompt(title, desc) {
   return `
-Generate UPSC-style SHORT news summary in JSON:
+Generate UPSC-style CURRENT AFFAIRS news in JSON:
 
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
-"NewsDesc_en":"(max 60-80 words, crisp summary)",
-"NewsDesc_hi":"(short Hindi summary)",
-"GS_Tag":"",
+"Summary_en":"(2-3 lines short summary)",
+"Summary_hi":"",
+"NewsDesc_en":"(100-120 words explanation)",
+"NewsDesc_hi":"",
+"GS_Tag":"GS1/GS2/GS3",
 "MCQ_en":[
   {
     "question":"",
@@ -96,31 +98,36 @@ Title: ${title}
 Description: ${desc}
 
 IMPORTANT:
-- Description should be SHORT (60-80 words max)
-- Generate 2–5 MCQs (dynamic)
-- UPSC level (concept + fact)
-- Hindi natural hona chahiye
+- Generate 2-5 MCQs
+- Cover facts + concepts + impact
+- Summary must be short
+- Description should be crisp (not long)
+- Hindi natural
 - ONLY JSON
 `;
 }
 
-// 🔥 fallback (better summary)
+// 🔥 fallback
 function fallbackNews(article) {
   return {
     NewsTitle_en: article.title,
     NewsTitle_hi: article.title,
-    NewsDesc_en: (article.description || "No description").slice(0, 120),
-    NewsDesc_hi: "यह हाल की एक महत्वपूर्ण घटना का संक्षिप्त विवरण है।",
+    Summary_en: article.description || "Top global news event.",
+    Summary_hi: "यह एक महत्वपूर्ण वैश्विक समाचार है।",
+    NewsDesc_en: article.description || "No description available.",
+    NewsDesc_hi: "विवरण उपलब्ध नहीं है।",
     GS_Tag: "GS2",
     MCQ_en: [],
     MCQ_hi: [],
-    NewsPic: article.urlToImage || article.url || ""
+    NewsPic: article.urlToImage || "https://via.placeholder.com/300"
   };
 }
 
 // 🚀 MAIN
 async function run() {
   try {
+
+    // 🔥 GLOBAL TRENDING NEWS (IMPORTANT CHANGE)
     const newsRes = await axios.get(
       `https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`
     );
@@ -134,7 +141,11 @@ async function run() {
       if (results.length >= TARGET_NEWS) break;
 
       const article = articles[i];
+
       if (!article.title || usedTitles.has(article.title)) continue;
+
+      // ❌ ignore useless news
+      if (!article.description) continue;
 
       usedTitles.add(article.title);
 
@@ -145,7 +156,7 @@ async function run() {
       if (USE_AI && GEMINI_API_KEY) {
         await delay(2500);
 
-        const prompt = createPrompt(article.title, article.description || "");
+        const prompt = createPrompt(article.title, article.description);
         const aiText = await callGemini(prompt);
 
         parsed = extractJSON(aiText);
@@ -156,40 +167,37 @@ async function run() {
         parsed = fallbackNews(article);
       }
 
-      // 🔥 IMAGE FIX (important)
+      // 🔥 IMAGE FIX (IMPORTANT)
       parsed.NewsPic =
         article.urlToImage ||
-        article.image ||
-        (article.url && `https://image.thum.io/get/${article.url}`) || // auto screenshot fallback
-        "";
+        parsed.NewsPic ||
+        "https://via.placeholder.com/300";
 
       results.push(parsed);
     }
 
     console.log("✅ FINAL COUNT:", results.length);
 
-    // 🔥 DELETE OLD DATA
+    // 🔥 DELETE OLD
     const snapshot = await db.collection("TrendingNews").get();
-
     const deleteBatch = db.batch();
-    snapshot.docs.forEach((doc) => {
-      deleteBatch.delete(doc.ref);
-    });
 
+    snapshot.docs.forEach(doc => deleteBatch.delete(doc.ref));
     await deleteBatch.commit();
+
     console.log("🗑 Old news deleted");
 
-    // 🔥 ADD NEW DATA
+    // 🔥 ADD NEW
     const addBatch = db.batch();
 
-    results.forEach((news) => {
+    results.forEach(news => {
       const ref = db.collection("TrendingNews").doc();
       addBatch.set(ref, news);
     });
 
     await addBatch.commit();
 
-    console.log("🔥 SUCCESS: Firestore Updated (Short Summary + Image)");
+    console.log("🔥 SUCCESS: Firestore Updated");
 
   } catch (err) {
     console.log("❌ ERROR:", err.message);
