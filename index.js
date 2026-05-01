@@ -129,7 +129,7 @@ async function run() {
 
     // 🔥 GLOBAL TRENDING NEWS (IMPORTANT CHANGE)
     const newsRes = await axios.get(
-      `https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`
+      https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`
     );
 
     const articles = newsRes.data.articles;
