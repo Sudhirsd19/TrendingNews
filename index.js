@@ -1,74 +1,112 @@
 const axios = require("axios");
+const express = require("express");
+
+const app = express();
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-const NEWS_URL = `https://newsapi.org/v2/top-headlines?language=en&pageSize=20&apiKey=${NEWS_API_KEY}`;
+// =========================
+// 🔹 FETCH NEWS
+// =========================
+async function getNews() {
+  const url = `https://newsapi.org/v2/top-headlines?language=en&pageSize=30&apiKey=${NEWS_API_KEY}`;
+  const res = await axios.get(url);
+  return res.data.articles;
+}
 
-// ✅ Gemini API call with retry
+// =========================
+// 🔹 GEMINI API (RETRY)
+// =========================
 async function callGemini(prompt, retry = 3) {
   try {
     const res = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
-        contents: [
-          {
-            parts: [{ text: prompt }]
-          }
-        ]
+        contents: [{ parts: [{ text: prompt }] }]
       }
     );
 
-    return res.data.candidates[0].content.parts[0].text;
+    return res.data.candidates?.[0]?.content?.parts?.[0]?.text;
 
   } catch (err) {
+    console.log("❌ GEMINI ERROR:", err.response?.data || err.message);
+
     if (retry > 0) {
-      console.log("🔁 Retry Gemini...");
+      console.log("🔁 Retrying...");
       await new Promise(r => setTimeout(r, 2000));
       return callGemini(prompt, retry - 1);
     }
-    console.log("❌ GEMINI ERROR:", err.response?.data || err.message);
+
     return null;
   }
 }
 
-// ✅ Clean JSON parser
+// =========================
+// 🔹 JSON CLEANER
+// =========================
 function cleanJSON(text) {
   try {
     return JSON.parse(text);
   } catch {
     try {
-      const fixed = text.replace(/```json|```/g, "");
-      return JSON.parse(fixed);
+      return JSON.parse(text.replace(/```json|```/g, ""));
     } catch {
       return null;
     }
   }
 }
 
-// ✅ Generate AI Content
+// =========================
+// 🔹 FALLBACK (AI FAIL)
+// =========================
+function fallbackNews(article) {
+  return {
+    NewsTitle_en: article.title,
+    NewsTitle_hi: "यह समाचार महत्वपूर्ण है",
+    NewsDesc_en: article.description || "No description available",
+    NewsDesc_hi: "यह समाचार वर्तमान घटनाओं से संबंधित है और परीक्षा के दृष्टिकोण से महत्वपूर्ण है।",
+    GS_Tag: "GS2",
+    MCQ_en: [],
+    MCQ_hi: [],
+    NewsPic: article.urlToImage || ""
+  };
+}
+
+// =========================
+// 🔹 DUPLICATE CHECK
+// =========================
+function isDuplicate(title, existing) {
+  return existing.some(n =>
+    n.NewsTitle_en &&
+    n.NewsTitle_en.toLowerCase().includes(title.toLowerCase().substring(0, 30))
+  );
+}
+
+// =========================
+// 🔹 AI GENERATION
+// =========================
 async function generateNews(article) {
 
   const prompt = `
-You are UPSC content generator.
-
-Return ONLY valid JSON. No explanation.
+Generate UPSC style news in JSON.
 
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
 "NewsDesc_en":"",
 "NewsDesc_hi":"",
+"GS_Tag":"",
 "MCQ_en":[{"question":"","options":["","","",""],"answer":""}],
 "MCQ_hi":[{"question":"","options":["","","",""],"answer":""}]
 }
 
 Rules:
-- English + Hindi both
+- Hindi must be natural (not translation)
 - Description minimum 150 words
-- Generate 3 MCQs each
-- UPSC level questions
-- Strict JSON only
+- GS tagging (GS1/GS2/GS3/GS4)
+- 3 MCQs each
+- Return valid JSON only
 
 News:
 Title: ${article.title}
@@ -77,13 +115,17 @@ Description: ${article.description}
 
   const text = await callGemini(prompt);
 
-  if (!text) return null;
+  console.log("🔍 RAW AI:", text?.slice(0, 150));
+
+  if (!text) {
+    return fallbackNews(article);
+  }
 
   const json = cleanJSON(text);
 
   if (!json) {
-    console.log("❌ JSON ERROR");
-    return null;
+    console.log("❌ JSON FAILED → fallback");
+    return fallbackNews(article);
   }
 
   return {
@@ -92,50 +134,69 @@ Description: ${article.description}
   };
 }
 
-// ✅ MAIN
-async function main() {
-  try {
-    const newsRes = await axios.get(NEWS_URL);
+// =========================
+// 🔹 MAIN PROCESS
+// =========================
+async function processNews() {
+  const articles = await getNews();
 
-    const articles = newsRes.data.articles;
+  let finalData = [];
 
-    console.log("API Response:", newsRes.data.status, articles.length);
+  for (let art of articles) {
 
-    let finalData = [];
+    if (finalData.length >= 10) break;
 
-    for (let i = 0; i < articles.length; i++) {
-      if (finalData.length >= 10) break;
+    if (!art.title || !art.description) continue;
 
-      const art = articles[i];
+    if (isDuplicate(art.title, finalData)) continue;
 
-      if (!art.title || !art.description) continue;
+    console.log(`📰 Processing (${finalData.length + 1}/10):`, art.title);
 
-      console.log(`📰 Processing (${finalData.length + 1}/10):`, art.title);
+    const aiData = await generateNews(art);
 
-      const aiData = await generateNews(art);
+    if (!aiData) continue;
 
-      if (aiData) {
-        finalData.push(aiData);
-      } else {
-        console.log("⚠️ Skipped...");
-      }
-    }
+    if (isDuplicate(aiData.NewsTitle_en, finalData)) continue;
 
-    console.log("✅ FINAL COUNT:", finalData.length);
-
-    if (finalData.length === 0) {
-      console.log("❌ No AI Data Generated");
-      return;
-    }
-
-    // 👉 Firebase upload (optional)
-    // await uploadToFirebase(finalData);
-
-    console.log("🔥 FINAL DATA READY");
-
-  } catch (err) {
-    console.log("❌ MAIN ERROR:", err.message);
+    finalData.push(aiData);
   }
+
+  console.log("✅ FINAL COUNT:", finalData.length);
+
+  return finalData;
 }
 
-main();
+// =========================
+// 🚀 API FOR APP
+// =========================
+app.get("/news", async (req, res) => {
+  try {
+    const data = await processNews();
+
+    if (data.length === 0) {
+      return res.json({
+        status: "fallback",
+        message: "AI failed, showing basic news",
+        data: []
+      });
+    }
+
+    res.json({
+      status: "success",
+      count: data.length,
+      data
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================
+// 🚀 SERVER START
+// =========================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
+});
