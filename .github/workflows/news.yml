@@ -21,6 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Debug check
+        run: |
+          node -v
+          npm list firebase-admin || true
+
       - name: Run script
         run: node index.js
         env:
