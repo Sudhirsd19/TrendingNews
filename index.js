@@ -56,7 +56,6 @@ async function callGemini(prompt, retry = 2) {
     console.log("⚠️ Gemini Error:", err.response?.data?.error?.message || err.message);
 
     if (retry > 0) {
-      console.log("🔁 Retrying...");
       await delay(3000);
       return callGemini(prompt, retry - 1);
     }
@@ -65,16 +64,16 @@ async function callGemini(prompt, retry = 2) {
   }
 }
 
-// 🔥 Dynamic MCQ Prompt
+// 🔥 SHORT SUMMARY PROMPT
 function createPrompt(title, desc) {
   return `
-Generate UPSC-style news in JSON:
+Generate UPSC-style SHORT news summary in JSON:
 
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
-"NewsDesc_en":"",
-"NewsDesc_hi":"",
+"NewsDesc_en":"(max 60-80 words, crisp summary)",
+"NewsDesc_hi":"(short Hindi summary)",
 "GS_Tag":"",
 "MCQ_en":[
   {
@@ -97,26 +96,25 @@ Title: ${title}
 Description: ${desc}
 
 IMPORTANT:
-- Generate as many MCQs as possible (minimum 2, maximum 5)
-- Each MCQ must have 4 options
-- Questions should be UPSC level (conceptual + factual)
-- Cover different angles (fact, concept, impact)
-- Hindi should be natural translation
-- ONLY JSON (no explanation)
+- Description should be SHORT (60-80 words max)
+- Generate 2–5 MCQs (dynamic)
+- UPSC level (concept + fact)
+- Hindi natural hona chahiye
+- ONLY JSON
 `;
 }
 
-// 🔥 fallback
+// 🔥 fallback (better summary)
 function fallbackNews(article) {
   return {
     NewsTitle_en: article.title,
     NewsTitle_hi: article.title,
-    NewsDesc_en: article.description || "No description",
-    NewsDesc_hi: "यह एक महत्वपूर्ण समाचार है।",
+    NewsDesc_en: (article.description || "No description").slice(0, 120),
+    NewsDesc_hi: "यह हाल की एक महत्वपूर्ण घटना का संक्षिप्त विवरण है।",
     GS_Tag: "GS2",
     MCQ_en: [],
     MCQ_hi: [],
-    NewsPic: article.urlToImage || ""
+    NewsPic: article.urlToImage || article.url || ""
   };
 }
 
@@ -145,7 +143,7 @@ async function run() {
       let parsed = null;
 
       if (USE_AI && GEMINI_API_KEY) {
-        await delay(2500); // rate control
+        await delay(2500);
 
         const prompt = createPrompt(article.title, article.description || "");
         const aiText = await callGemini(prompt);
@@ -158,14 +156,19 @@ async function run() {
         parsed = fallbackNews(article);
       }
 
-      parsed.NewsPic = article.urlToImage || "";
+      // 🔥 IMAGE FIX (important)
+      parsed.NewsPic =
+        article.urlToImage ||
+        article.image ||
+        (article.url && `https://image.thum.io/get/${article.url}`) || // auto screenshot fallback
+        "";
 
       results.push(parsed);
     }
 
     console.log("✅ FINAL COUNT:", results.length);
 
-    // 🔥 STEP 1: OLD DATA DELETE
+    // 🔥 DELETE OLD DATA
     const snapshot = await db.collection("TrendingNews").get();
 
     const deleteBatch = db.batch();
@@ -176,7 +179,7 @@ async function run() {
     await deleteBatch.commit();
     console.log("🗑 Old news deleted");
 
-    // 🔥 STEP 2: NEW DATA ADD
+    // 🔥 ADD NEW DATA
     const addBatch = db.batch();
 
     results.forEach((news) => {
@@ -186,7 +189,7 @@ async function run() {
 
     await addBatch.commit();
 
-    console.log("🔥 SUCCESS: Firestore Updated (Dynamic MCQ)");
+    console.log("🔥 SUCCESS: Firestore Updated (Short Summary + Image)");
 
   } catch (err) {
     console.log("❌ ERROR:", err.message);
