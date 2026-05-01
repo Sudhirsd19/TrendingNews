@@ -1,11 +1,14 @@
 const axios = require("axios");
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const GEMINI_KEY = process.env.GEMINI_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const TARGET_NEWS = 10;
 
-// 🔥 Clean JSON extractor
+// 🔑 Debug (must show FOUND)
+console.log("🔑 GEMINI KEY:", GEMINI_API_KEY ? "FOUND" : "NOT FOUND");
+
+// 🔥 JSON extractor
 function extractJSON(text) {
   try {
     const match = text.match(/{[\s\S]*}/);
@@ -15,11 +18,11 @@ function extractJSON(text) {
   }
 }
 
-// 🔥 Gemini API call (with retry)
+// 🔥 Gemini API call with retry
 async function callGemini(prompt, retry = 3) {
   try {
     const res = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }]
       }
@@ -31,7 +34,7 @@ async function callGemini(prompt, retry = 3) {
     console.log("⚠️ Gemini Error:", err.response?.data || err.message);
 
     if (retry > 0) {
-      await new Promise(r => setTimeout(r, 5000)); // wait 5 sec
+      await new Promise(r => setTimeout(r, 4000)); // wait 4 sec
       return callGemini(prompt, retry - 1);
     }
 
@@ -39,7 +42,7 @@ async function callGemini(prompt, retry = 3) {
   }
 }
 
-// 🔥 AI Prompt
+// 🔥 Prompt
 function createPrompt(title, desc) {
   return `
 Generate UPSC-style news in JSON:
@@ -47,8 +50,8 @@ Generate UPSC-style news in JSON:
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
-"NewsDesc_en":"(150+ words)",
-"NewsDesc_hi":"(human Hindi)",
+"NewsDesc_en":"(minimum 150 words)",
+"NewsDesc_hi":"(natural Hindi)",
 "GS_Tag":"",
 "MCQ_en":[{"question":"","options":["","","",""],"answer":""}],
 "MCQ_hi":[{"question":"","options":["","","",""],"answer":""}]
@@ -58,11 +61,11 @@ News:
 Title: ${title}
 Description: ${desc}
 
-ONLY JSON.
+ONLY JSON. No explanation.
 `;
 }
 
-// 🔥 Fallback (AI fail ho to bhi data mile)
+// 🔥 Fallback
 function fallbackNews(article) {
   return {
     NewsTitle_en: article.title,
@@ -76,7 +79,7 @@ function fallbackNews(article) {
   };
 }
 
-// 🔥 Main function
+// 🚀 MAIN
 async function run() {
   try {
     const newsRes = await axios.get(
@@ -95,13 +98,18 @@ async function run() {
 
       const article = articles[i];
 
-      // ❌ Skip duplicates
+      if (!article.title) continue;
+
+      // ❌ duplicate remove
       if (usedTitles.has(article.title)) continue;
       usedTitles.add(article.title);
 
       console.log(`📰 Processing (${results.length + 1}/${TARGET_NEWS}):`, article.title);
 
-      const prompt = createPrompt(article.title, article.description);
+      // 🔥 delay to avoid rate limit
+      await new Promise(r => setTimeout(r, 2000));
+
+      const prompt = createPrompt(article.title, article.description || "");
 
       const aiText = await callGemini(prompt);
 
