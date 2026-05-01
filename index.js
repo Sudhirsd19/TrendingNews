@@ -4,8 +4,6 @@ const admin = require("firebase-admin");
 // 🔑 ENV KEYS
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-// 🔥 🔥 YAHI DALNA THA (IMPORTANT)
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 // 🔥 Firebase Init
@@ -58,6 +56,7 @@ async function callGemini(prompt, retry = 2) {
     console.log("⚠️ Gemini Error:", err.response?.data?.error?.message || err.message);
 
     if (retry > 0) {
+      console.log("🔁 Retrying...");
       await delay(3000);
       return callGemini(prompt, retry - 1);
     }
@@ -66,10 +65,10 @@ async function callGemini(prompt, retry = 2) {
   }
 }
 
-// 🔥 Prompt
+// 🔥 Dynamic MCQ Prompt
 function createPrompt(title, desc) {
   return `
-Generate UPSC-style news strictly in JSON:
+Generate UPSC-style news in JSON:
 
 {
 "NewsTitle_en":"",
@@ -77,14 +76,33 @@ Generate UPSC-style news strictly in JSON:
 "NewsDesc_en":"",
 "NewsDesc_hi":"",
 "GS_Tag":"",
-"MCQ_en":[{"question":"","options":["","","",""],"answer":""}],
-"MCQ_hi":[{"question":"","options":["","","",""],"answer":""}]
+"MCQ_en":[
+  {
+    "question":"",
+    "options":["","","",""],
+    "answer":""
+  }
+],
+"MCQ_hi":[
+  {
+    "question":"",
+    "options":["","","",""],
+    "answer":""
+  }
+]
 }
 
+News:
 Title: ${title}
 Description: ${desc}
 
-ONLY JSON
+IMPORTANT:
+- Generate as many MCQs as possible (minimum 2, maximum 5)
+- Each MCQ must have 4 options
+- Questions should be UPSC level (conceptual + factual)
+- Cover different angles (fact, concept, impact)
+- Hindi should be natural translation
+- ONLY JSON (no explanation)
 `;
 }
 
@@ -127,10 +145,11 @@ async function run() {
       let parsed = null;
 
       if (USE_AI && GEMINI_API_KEY) {
-        await delay(2000);
+        await delay(2500); // rate control
 
         const prompt = createPrompt(article.title, article.description || "");
         const aiText = await callGemini(prompt);
+
         parsed = extractJSON(aiText);
       }
 
@@ -146,17 +165,28 @@ async function run() {
 
     console.log("✅ FINAL COUNT:", results.length);
 
-    // 🔥 FIREBASE UPLOAD
-    const batch = db.batch();
+    // 🔥 STEP 1: OLD DATA DELETE
+    const snapshot = await db.collection("TrendingNews").get();
+
+    const deleteBatch = db.batch();
+    snapshot.docs.forEach((doc) => {
+      deleteBatch.delete(doc.ref);
+    });
+
+    await deleteBatch.commit();
+    console.log("🗑 Old news deleted");
+
+    // 🔥 STEP 2: NEW DATA ADD
+    const addBatch = db.batch();
 
     results.forEach((news) => {
       const ref = db.collection("TrendingNews").doc();
-      batch.set(ref, news);
+      addBatch.set(ref, news);
     });
 
-    await batch.commit();
+    await addBatch.commit();
 
-    console.log("🔥 SUCCESS: Firestore Updated");
+    console.log("🔥 SUCCESS: Firestore Updated (Dynamic MCQ)");
 
   } catch (err) {
     console.log("❌ ERROR:", err.message);
