@@ -16,10 +16,10 @@ function extractJSON(text) {
 }
 
 // 🔥 Gemini API call (with retry)
-async function callGemini(prompt, retry = 2) {
+async function callGemini(prompt, retry = 3) {
   try {
     const res = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }]
       }
@@ -28,13 +28,13 @@ async function callGemini(prompt, retry = 2) {
     return res.data.candidates[0].content.parts[0].text;
 
   } catch (err) {
+    console.log("⚠️ Gemini Error:", err.response?.data || err.message);
+
     if (retry > 0) {
-      console.log("🔁 Retrying Gemini...");
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 5000)); // wait 5 sec
       return callGemini(prompt, retry - 1);
     }
 
-    console.log("❌ GEMINI FAILED");
     return null;
   }
 }
