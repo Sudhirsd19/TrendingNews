@@ -64,17 +64,36 @@ async function callGemini(prompt, retry = 2) {
   }
 }
 
-// 🔥 PROMPT (TRENDING + SUMMARY + MCQ)
+// 🔥 UPSC FILTER (VERY IMPORTANT)
+function isImportantNews(article) {
+  const text = (article.title + " " + article.description).toLowerCase();
+
+  const keywords = [
+    "india", "government", "policy", "bill", "law",
+    "supreme court", "parliament", "election",
+    "economy", "inflation", "gdp", "bank", "rbi",
+    "international", "un", "imf", "world bank",
+    "china", "usa", "russia",
+    "defence", "military", "army", "navy",
+    "environment", "climate", "summit", "agreement",
+    "science", "space", "nasa", "isro",
+    "education", "health"
+  ];
+
+  return keywords.some(k => text.includes(k));
+}
+
+// 🔥 PROMPT (BEST VERSION)
 function createPrompt(title, desc) {
   return `
-Generate UPSC-style CURRENT AFFAIRS news in JSON:
+Generate UPSC CURRENT AFFAIRS in JSON:
 
 {
 "NewsTitle_en":"",
 "NewsTitle_hi":"",
-"Summary_en":"(2-3 lines short summary)",
+"Summary_en":"(2 lines short)",
 "Summary_hi":"",
-"NewsDesc_en":"(100-120 words explanation)",
+"NewsDesc_en":"(100 words crisp)",
 "NewsDesc_hi":"",
 "GS_Tag":"GS1/GS2/GS3",
 "MCQ_en":[
@@ -99,10 +118,8 @@ Description: ${desc}
 
 IMPORTANT:
 - Generate 2-5 MCQs
-- Cover facts + concepts + impact
-- Summary must be short
-- Description should be crisp (not long)
-- Hindi natural
+- Focus on UPSC relevance
+- No entertainment/sports
 - ONLY JSON
 `;
 }
@@ -112,10 +129,10 @@ function fallbackNews(article) {
   return {
     NewsTitle_en: article.title,
     NewsTitle_hi: article.title,
-    Summary_en: article.description || "Top global news event.",
-    Summary_hi: "यह एक महत्वपूर्ण वैश्विक समाचार है।",
-    NewsDesc_en: article.description || "No description available.",
-    NewsDesc_hi: "विवरण उपलब्ध नहीं है।",
+    Summary_en: article.description || "Important global news",
+    Summary_hi: "महत्वपूर्ण समाचार",
+    NewsDesc_en: article.description || "No description",
+    NewsDesc_hi: "विवरण उपलब्ध नहीं है",
     GS_Tag: "GS2",
     MCQ_en: [],
     MCQ_hi: [],
@@ -127,12 +144,18 @@ function fallbackNews(article) {
 async function run() {
   try {
 
-    // 🔥 GLOBAL TRENDING NEWS (IMPORTANT CHANGE)
-    const newsRes = await axios.get(
-      `https://newsapi.org/v2/everything?q=global&sortBy=publishedAt&pageSize=50&apiKey=${NEWS_API_KEY}`
-    );
+    // 🔥 MULTIPLE SOURCES (IMPORTANT FIX)
+    const urls = [
+      `https://newsapi.org/v2/top-headlines?country=in&pageSize=30&apiKey=${NEWS_API_KEY}`,
+      `https://newsapi.org/v2/everything?q=international&pageSize=30&sortBy=publishedAt&apiKey=${NEWS_API_KEY}`
+    ];
 
-    const articles = newsRes.data.articles;
+    let articles = [];
+
+    for (let url of urls) {
+      const res = await axios.get(url);
+      articles = articles.concat(res.data.articles);
+    }
 
     const results = [];
     const usedTitles = new Set();
@@ -142,24 +165,22 @@ async function run() {
 
       const article = articles[i];
 
-      if (!article.title) continue;
+      if (!article.title || !article.description) continue;
 
-      // simple duplicate check
+      // ❌ duplicate remove
       if (usedTitles.has(article.title.toLowerCase())) continue;
 
-usedTitles.add(article.title.toLowerCase());
+      // 🔥 UPSC filter
+      if (!isImportantNews(article)) continue;
 
-      // ❌ ignore useless news
-      if (!article.description) continue;
-
-      usedTitles.add(article.title);
+      usedTitles.add(article.title.toLowerCase());
 
       console.log(`📰 ${results.length + 1}:`, article.title);
 
       let parsed = null;
 
       if (USE_AI && GEMINI_API_KEY) {
-        await delay(2500);
+        await delay(2000);
 
         const prompt = createPrompt(article.title, article.description);
         const aiText = await callGemini(prompt);
@@ -172,7 +193,6 @@ usedTitles.add(article.title.toLowerCase());
         parsed = fallbackNews(article);
       }
 
-      // 🔥 IMAGE FIX (IMPORTANT)
       parsed.NewsPic =
         article.urlToImage ||
         parsed.NewsPic ||
@@ -183,10 +203,15 @@ usedTitles.add(article.title.toLowerCase());
 
     console.log("✅ FINAL COUNT:", results.length);
 
+    // ❗ SAFETY: if less than 10 → still upload whatever available
+    if (results.length === 0) {
+      console.log("❌ No valid news found");
+      return;
+    }
+
     // 🔥 DELETE OLD
     const snapshot = await db.collection("TrendingNews").get();
     const deleteBatch = db.batch();
-
     snapshot.docs.forEach(doc => deleteBatch.delete(doc.ref));
     await deleteBatch.commit();
 
@@ -194,7 +219,6 @@ usedTitles.add(article.title.toLowerCase());
 
     // 🔥 ADD NEW
     const addBatch = db.batch();
-
     results.forEach(news => {
       const ref = db.collection("TrendingNews").doc();
       addBatch.set(ref, news);
