@@ -1,9 +1,10 @@
 const axios = require("axios");
 const admin = require("firebase-admin");
+const OpenAI = require("openai");
 
 // 🔑 ENV KEYS
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 // 🔥 Firebase Init
@@ -13,8 +14,14 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+// 🔥 NVIDIA CLIENT
+const client = new OpenAI({
+  apiKey: NVIDIA_API_KEY,
+  baseURL: "https://integrate.api.nvidia.com/v1",
+});
+
 console.log("🔥 Firebase Connected");
-console.log("🔑 GEMINI KEY:", GEMINI_API_KEY ? "FOUND" : "NOT FOUND");
+console.log("🔑 NVIDIA KEY:", NVIDIA_API_KEY ? "FOUND" : "NOT FOUND");
 
 const TARGET_NEWS = 10;
 const USE_AI = true;
@@ -26,34 +33,42 @@ const delay = ms => new Promise(res => setTimeout(res, ms));
 function extractJSON(text) {
   try {
     if (!text) return null;
+
     const clean = text.replace(/```json|```/g, "").trim();
+
     const match = clean.match(/{[\s\S]*}/);
+
     return match ? JSON.parse(match[0]) : null;
+
   } catch {
     return null;
   }
 }
 
-// 🔥 Gemini API
+// 🔥 NVIDIA AI
 async function callGemini(prompt, retry = 2) {
-  try {
-    const res = await axios.post(
-      "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent",
-      {
-        contents: [{ parts: [{ text: prompt }] }]
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": GEMINI_API_KEY
-        }
-      }
-    );
 
-    return res.data.candidates?.[0]?.content?.parts?.[0]?.text;
+  try {
+
+    const completion = await client.chat.completions.create({
+      model: "meta/llama-3.1-8b-instruct",
+
+      messages: [
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+
+      temperature: 0.4,
+      max_tokens: 1200,
+    });
+
+    return completion.choices[0].message.content;
 
   } catch (err) {
-    console.log("⚠️ Gemini Error:", err.response?.data?.error?.message || err.message);
+
+    console.log("⚠️ NVIDIA Error:", err.message);
 
     if (retry > 0) {
       await delay(3000);
@@ -64,96 +79,149 @@ async function callGemini(prompt, retry = 2) {
   }
 }
 
-// 🔥 UPSC FILTER (VERY IMPORTANT)
+// 🔥 UPSC FILTER
 function isImportantNews(article) {
-  const text = (article.title + " " + article.description).toLowerCase();
+
+  const text = (
+    article.title + " " + article.description
+  ).toLowerCase();
 
   const keywords = [
-    "india", "government", "policy", "bill", "law",
-    "supreme court", "parliament", "election",
-    "economy", "inflation", "gdp", "bank", "rbi",
-    "international", "un", "imf", "world bank",
-    "china", "usa", "russia",
-    "defence", "military", "army", "navy",
-    "environment", "climate", "summit", "agreement",
-    "science", "space", "nasa", "isro",
-    "education", "health"
+    "india",
+    "government",
+    "policy",
+    "bill",
+    "law",
+    "supreme court",
+    "parliament",
+    "election",
+    "economy",
+    "inflation",
+    "gdp",
+    "bank",
+    "rbi",
+    "international",
+    "un",
+    "imf",
+    "world bank",
+    "china",
+    "usa",
+    "russia",
+    "defence",
+    "military",
+    "army",
+    "navy",
+    "environment",
+    "climate",
+    "summit",
+    "agreement",
+    "science",
+    "space",
+    "nasa",
+    "isro",
+    "education",
+    "health"
   ];
 
   return keywords.some(k => text.includes(k));
 }
 
-// 🔥 PROMPT (BEST VERSION)
+// 🔥 PROMPT
 function createPrompt(title, desc) {
+
   return `
-Generate UPSC CURRENT AFFAIRS in JSON:
+Generate UPSC CURRENT AFFAIRS in STRICT JSON format.
 
 {
-"NewsTitle_en":"",
-"NewsTitle_hi":"",
-"Summary_en":"(2 lines short)",
-"Summary_hi":"",
-"NewsDesc_en":"(100 words crisp)",
-"NewsDesc_hi":"",
-"GS_Tag":"GS1/GS2/GS3",
-"MCQ_en":[
-  {
-    "question":"",
-    "options":["","","",""],
-    "answer":""
-  }
-],
-"MCQ_hi":[
-  {
-    "question":"",
-    "options":["","","",""],
-    "answer":""
-  }
-]
+  "NewsTitle_en":"",
+  "NewsTitle_hi":"",
+  "Summary_en":"",
+  "Summary_hi":"",
+  "NewsDesc_en":"",
+  "NewsDesc_hi":"",
+  "GS_Tag":"GS1/GS2/GS3",
+  "MCQ_en":[
+    {
+      "question":"",
+      "options":["","","",""],
+      "answer":""
+    }
+  ],
+  "MCQ_hi":[
+    {
+      "question":"",
+      "options":["","","",""],
+      "answer":""
+    }
+  ]
 }
 
 News:
 Title: ${title}
-Description: ${desc}
 
-IMPORTANT:
-- Generate 2-5 MCQs
-- Focus on UPSC relevance
-- No entertainment/sports
-- ONLY JSON
+Description:
+${desc}
+
+IMPORTANT RULES:
+- Generate 2 to 5 MCQs
+- UPSC focused
+- No entertainment
+- No markdown
+- No explanation
+- Output ONLY valid JSON
 `;
 }
 
-// 🔥 fallback
+// 🔥 FALLBACK
 function fallbackNews(article) {
+
   return {
     NewsTitle_en: article.title,
     NewsTitle_hi: article.title,
-    Summary_en: article.description || "Important global news",
-    Summary_hi: "महत्वपूर्ण समाचार",
-    NewsDesc_en: article.description || "No description",
-    NewsDesc_hi: "विवरण उपलब्ध नहीं है",
+
+    Summary_en:
+      article.description || "Important global news",
+
+    Summary_hi:
+      "महत्वपूर्ण समाचार",
+
+    NewsDesc_en:
+      article.description || "No description",
+
+    NewsDesc_hi:
+      "विवरण उपलब्ध नहीं है",
+
     GS_Tag: "GS2",
+
     MCQ_en: [],
+
     MCQ_hi: [],
-    NewsPic: article.urlToImage || "https://via.placeholder.com/300"
+
+    NewsPic:
+      article.urlToImage ||
+      "https://via.placeholder.com/300"
   };
 }
 
 // 🚀 MAIN
 async function run() {
+
   try {
 
-    // 🔥 MULTIPLE SOURCES (IMPORTANT FIX)
+    // 🔥 MULTIPLE NEWS SOURCES
     const urls = [
+
       `https://newsapi.org/v2/top-headlines?country=in&pageSize=30&apiKey=${NEWS_API_KEY}`,
+
       `https://newsapi.org/v2/everything?q=international&pageSize=30&sortBy=publishedAt&apiKey=${NEWS_API_KEY}`
     ];
 
     let articles = [];
 
     for (let url of urls) {
+
       const res = await axios.get(url);
+
       articles = articles.concat(res.data.articles);
     }
 
@@ -161,35 +229,50 @@ async function run() {
     const usedTitles = new Set();
 
     for (let i = 0; i < articles.length; i++) {
+
       if (results.length >= TARGET_NEWS) break;
 
       const article = articles[i];
 
-      if (!article.title || !article.description) continue;
+      if (!article.title || !article.description)
+        continue;
 
-      // ❌ duplicate remove
-      if (usedTitles.has(article.title.toLowerCase())) continue;
+      // ❌ Duplicate remove
+      if (usedTitles.has(article.title.toLowerCase()))
+        continue;
 
       // 🔥 UPSC filter
-      if (!isImportantNews(article)) continue;
+      if (!isImportantNews(article))
+        continue;
 
       usedTitles.add(article.title.toLowerCase());
 
-      console.log(`📰 ${results.length + 1}:`, article.title);
+      console.log(
+        `📰 ${results.length + 1}:`,
+        article.title
+      );
 
       let parsed = null;
 
-      if (USE_AI && GEMINI_API_KEY) {
+      if (USE_AI && NVIDIA_API_KEY) {
+
         await delay(2000);
 
-        const prompt = createPrompt(article.title, article.description);
+        const prompt = createPrompt(
+          article.title,
+          article.description
+        );
+
         const aiText = await callGemini(prompt);
 
         parsed = extractJSON(aiText);
       }
 
+      // 🔥 Fallback
       if (!parsed) {
+
         console.log("⚠️ Using fallback...");
+
         parsed = fallbackNews(article);
       }
 
@@ -203,24 +286,36 @@ async function run() {
 
     console.log("✅ FINAL COUNT:", results.length);
 
-    // ❗ SAFETY: if less than 10 → still upload whatever available
+    // ❌ No news
     if (results.length === 0) {
+
       console.log("❌ No valid news found");
+
       return;
     }
 
-    // 🔥 DELETE OLD
-    const snapshot = await db.collection("TrendingNews").get();
+    // 🗑 DELETE OLD
+    const snapshot =
+      await db.collection("TrendingNews").get();
+
     const deleteBatch = db.batch();
-    snapshot.docs.forEach(doc => deleteBatch.delete(doc.ref));
+
+    snapshot.docs.forEach(doc =>
+      deleteBatch.delete(doc.ref)
+    );
+
     await deleteBatch.commit();
 
     console.log("🗑 Old news deleted");
 
     // 🔥 ADD NEW
     const addBatch = db.batch();
+
     results.forEach(news => {
-      const ref = db.collection("TrendingNews").doc();
+
+      const ref =
+        db.collection("TrendingNews").doc();
+
       addBatch.set(ref, news);
     });
 
@@ -229,6 +324,7 @@ async function run() {
     console.log("🔥 SUCCESS: Firestore Updated");
 
   } catch (err) {
+
     console.log("❌ ERROR:", err.message);
   }
 }
